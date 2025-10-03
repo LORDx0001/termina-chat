@@ -3,7 +3,7 @@ import threading
 import sys
 import re
 
-HOST = 'твой.IP.сервера'  # или домен
+HOST = '84.46.247.15'  # или домен
 PORT = 12345
 
 # ANSI цвета
