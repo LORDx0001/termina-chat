@@ -12,8 +12,14 @@ def get_free_port():
 
 def init_db():
     conn = sqlite3.connect(DB)
-    conn.execute("CREATE TABLE IF NOT EXISTS rooms (port INTEGER PRIMARY KEY, launched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS rooms (
+            port INTEGER PRIMARY KEY,
+            launched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
+
 
 def save_port(port):
     conn = sqlite3.connect(DB)
@@ -43,3 +49,4 @@ def status():
 if __name__ == "__main__":
     init_db()
     app.run(host="0.0.0.0", port=5000)
+
