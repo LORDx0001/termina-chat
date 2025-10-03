@@ -7,7 +7,6 @@ import os
 RED = '\033[91m'
 GREEN = '\033[92m'
 RESET = '\033[0m'
-
 buffer = ''
 
 def colorize(message):
@@ -37,19 +36,20 @@ def start_client():
     global buffer
     host = '84.46.247.15'
     port = int(os.environ.get('CHAT_PORT', input("Введите порт комнаты: ").strip()))
-
+    try:
+        with open("requested_ports.txt", "a") as f:
+            f.write(f"{port}\n")
+    except:
+        pass
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         client.connect((host, port))
     except Exception as e:
         print(f"[!] Не удалось подключиться: {e}")
         return
-
     name = input("Введите ваше имя: ").strip() or "Аноним"
     client.send(f"{name} присоединился к чату.".encode('utf-8'))
-
     threading.Thread(target=receive_messages, args=(client,), daemon=True).start()
-
     try:
         while True:
             sys.stdout.write('> ')

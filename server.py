@@ -11,7 +11,6 @@ def broadcast(message, conn, port):
             client.send(message)
         except:
             clients.remove(client)
-
     try:
         conn.execute("INSERT INTO messages (port, content) VALUES (?, ?)", (port, message.decode('utf-8')))
         conn.commit()
@@ -40,28 +39,22 @@ def start_server(port):
             content TEXT
         )
     """)
-
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(('0.0.0.0', port))
     server.listen()
-
     print(f"[+] Сервер запущен на порту {port}")
-
     while True:
         client, addr = server.accept()
         clients.append(client)
-
         rows = conn.execute("SELECT content FROM messages WHERE port = ?", (port,)).fetchall()
         for row in rows:
             client.send(row[0].encode('utf-8'))
-
         threading.Thread(target=handle_client, args=(client, conn, port), daemon=True).start()
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Использование: python3 server.py <порт>")
         sys.exit(1)
-
     port = int(sys.argv[1])
     start_server(port)
