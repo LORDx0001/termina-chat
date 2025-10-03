@@ -6,39 +6,57 @@ PORT = 12345
 
 clients = []
 
-def broadcast(message, sender_socket):
+def broadcast(message):
     for client in clients:
-        if client != sender_socket:
-            try:
-                client.send(message)
-            except:
-                clients.remove(client)
+        try:
+            client.send(message)
+        except:
+            clients.remove(client)
 
-def handle_client(client_socket, address):
-    print(f"[+] Подключен: {address}")
+    # Сохраняем сообщение в лог
     try:
-        while True:
-            message = client_socket.recv(1024)
+        with open("chat.log", "a", encoding="utf-8") as log:
+            log.write(message.decode('utf-8') + "\n")
+    except Exception as e:
+        print(f"[!] Ошибка записи в лог: {e}")
+
+def handle_client(client):
+    while True:
+        try:
+            message = client.recv(1024)
             if not message:
                 break
-            broadcast(message, client_socket)
-    except Exception as e:
-        print(f"[!] Ошибка с {address}: {e}")
-    finally:
-        print(f"[-] Отключен: {address}")
-        clients.remove(client_socket)
-        client_socket.close()
+
+            decoded = message.decode('utf-8').strip()
+
+            if decoded == "/history":
+                try:
+                    with open("chat.log", "r", encoding="utf-8") as log:
+                        history = log.read()
+                    client.send(f"[История чата]\n{history}".encode('utf-8'))
+                except:
+                    client.send("[!] История недоступна.".encode('utf-8'))
+                continue
+
+            broadcast(message)
+        except:
+            break
+    client.close()
+    if client in clients:
+        clients.remove(client)
 
 def start_server():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((HOST, PORT))
     server.listen()
-    print(f"[Сервер] Запущен на {HOST}:{PORT}")
+
+    print(f"[+] Сервер запущен на {HOST}:{PORT}")
 
     while True:
-        client_socket, address = server.accept()
-        clients.append(client_socket)
-        threading.Thread(target=handle_client, args=(client_socket, address), daemon=True).start()
+        client, addr = server.accept()
+        clients.append(client)
+        threading.Thread(target=handle_client, args=(client,), daemon=True).start()
 
 if __name__ == "__main__":
     start_server()
