@@ -1,70 +1,31 @@
+import sqlite3
 import socket
-import threading
-import sys
-import re
-import os
 
-RED = '\033[91m'
-GREEN = '\033[92m'
-RESET = '\033[0m'
-buffer = ''
+DB_PATH = "/root/terminal-chat/ports.db"
 
-def colorize(message):
-    match = re.match(r"^(.*?):\s(.*)", message)
-    if match:
-        name = match.group(1)
-        text = match.group(2)
-        return f"{RED}{name}{RESET}: {GREEN}{text}{RESET}"
-    return message
+def get_latest_port():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT port FROM rooms ORDER BY launched_at DESC LIMIT 1")
+    result = c.fetchone()
+    conn.close()
+    return result[0] if result else None
 
-def receive_messages(sock):
-    global buffer
-    while True:
-        try:
-            message = sock.recv(1024).decode('utf-8')
-            if message:
-                sys.stdout.write('\r' + ' ' * 80 + '\r')
-                print(colorize(message))
-                sys.stdout.write(f'> {buffer}')
-                sys.stdout.flush()
-        except:
-            print("\n[!] Соединение потеряно.")
-            sock.close()
-            break
-
-def start_client():
-    global buffer
-    host = '84.46.247.15'
-    port = int(os.environ.get('CHAT_PORT', input("Введите порт комнаты: ").strip()))
+def connect_to_room(port):
+    s = socket.socket()
     try:
-        with open("requested_ports.txt", "a") as f:
-            f.write(f"{port}\n")
-    except:
-        pass
-    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        client.connect((host, port))
-    except Exception as e:
-        print(f"[!] Не удалось подключиться: {e}")
-        return
-    name = input("Введите ваше имя: ").strip() or "Аноним"
-    client.send(f"{name} присоединился к чату.".encode('utf-8'))
-    threading.Thread(target=receive_messages, args=(client,), daemon=True).start()
-    try:
+        s.connect(('127.0.0.1', port))
+        print(f"[client] Подключено к порту {port}")
         while True:
-            sys.stdout.write('> ')
-            sys.stdout.flush()
-            buffer = input()
-            if buffer.lower() in ['exit', 'quit']:
-                break
-            client.send(f"{name}: {buffer}".encode('utf-8'))
-            buffer = ''
-    except KeyboardInterrupt:
-        print("\n[!] Вы вышли из чата через Ctrl+C.")
-    finally:
-        client.send(f"{name} покинул чат.".encode('utf-8'))
-        client.close()
-        sys.exit()
+            msg = input("> ")
+            s.send(msg.encode())
+            print(s.recv(1024).decode())
+    except Exception as e:
+        print(f"[client] Ошибка подключения: {e}")
 
 if __name__ == "__main__":
-    start_client()
+    port = get_latest_port()
+    if port:
+        connect_to_room(port)
+    else:
+        print("[client] Нет активных комнат")

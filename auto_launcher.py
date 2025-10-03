@@ -5,10 +5,13 @@ import os
 import logging
 
 logging.basicConfig(
-    filename="launcher.log",
+    filename="/root/terminal-chat/launcher.log",
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
+
+SERVER_PATH = "/root/terminal-chat/server.py"
+PORT_FILE = "/root/terminal-chat/requested_ports.txt"
 
 def is_port_open(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -17,14 +20,17 @@ def is_port_open(port):
 def launch_server(port):
     logging.info(f"Запускаю сервер на порту {port}")
     print(f"[auto_launcher] Запускаю сервер на порту {port}")
-    subprocess.Popen(['python3', '/root/terminal-chat/server.py', str(port)],
-                     stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL)
+    try:
+        subprocess.Popen(['python3', SERVER_PATH, str(port)],
+                         stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    except Exception as e:
+        logging.error(f"Ошибка запуска порта {port}: {e}")
+        print(f"[auto_launcher] Ошибка запуска порта {port}: {e}")
 
 def initialize_ports():
-    path = "requested_ports.txt"
-    if not os.path.exists(path) or os.stat(path).st_size == 0:
-        with open(path, "w") as f:
+    if not os.path.exists(PORT_FILE) or os.stat(PORT_FILE).st_size == 0:
+        with open(PORT_FILE, "w") as f:
             for port in range(12345, 12350):
                 f.write(f"{port}\n")
         logging.info("Инициализированы порты: 12345–12349")
@@ -35,9 +41,10 @@ def monitor_ports():
     while True:
         print("[auto_launcher] Цикл запущен...")
         try:
-            with open("requested_ports.txt", "r") as f:
+            with open(PORT_FILE, "r") as f:
                 ports = {int(line.strip()) for line in f if line.strip().isdigit()}
-        except FileNotFoundError:
+        except Exception as e:
+            logging.error(f"Ошибка чтения портов: {e}")
             ports = set()
         for port in sorted(ports):
             if port not in known_ports and not is_port_open(port):
