@@ -2,7 +2,7 @@ import socket
 import requests
 
 def get_latest_port():
-    rooms = requests.get("http://localhost:5000/rooms").json()
+    rooms = requests.get("http://84.46.247.15:5000/rooms").json()
     if rooms:
         return rooms[0]["port"]
     return None
