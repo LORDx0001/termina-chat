@@ -3,15 +3,14 @@ import threading
 import sys
 import re
 
-HOST = '84.46.247.15'  # или домен
-PORT = 12345
+HOST = '84.46.247.15' 
 
-# ANSI цвета
+
 RED = '\033[91m'
 GREEN = '\033[92m'
 RESET = '\033[0m'
 
-buffer = ''  # буфер для ввода
+buffer = ''
 
 def colorize(message):
     match = re.match(r"^(.*?):\s(.*)", message)
@@ -38,16 +37,17 @@ def receive_messages(sock):
 
 def start_client():
     global buffer
+    port = int(input("Введите порт комнаты: ").strip())
+
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        client.connect((HOST, PORT))
+        client.connect((HOST, port))
     except Exception as e:
         print(f"[!] Не удалось подключиться: {e}")
         return
 
     name = input("Введите ваше имя: ").strip() or "Аноним"
     client.send(f"{name} присоединился к чату.".encode('utf-8'))
-    client.send("/history".encode('utf-8'))
 
     threading.Thread(target=receive_messages, args=(client,), daemon=True).start()
 
@@ -63,7 +63,7 @@ def start_client():
     except KeyboardInterrupt:
         print("\n[!] Вы вышли из чата через Ctrl+C.")
     finally:
-        client.send(f"{name} Чокинул Пат.".encode('utf-8'))
+        client.send(f"{name} покинул чат.".encode('utf-8'))
         client.close()
         sys.exit()
 

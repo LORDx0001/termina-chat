@@ -1,62 +1,70 @@
 import socket
 import threading
-
-HOST = '0.0.0.0'
-PORT = 12345
+import sqlite3
+import sys
 
 clients = []
 
-def broadcast(message):
+def broadcast(message, conn, port):
     for client in clients:
         try:
             client.send(message)
         except:
             clients.remove(client)
 
-    # Сохраняем сообщение в лог
+    # Сохраняем в базу
     try:
-        with open("chat.log", "a", encoding="utf-8") as log:
-            log.write(message.decode('utf-8') + "\n")
+        conn.execute("INSERT INTO messages (port, content) VALUES (?, ?)", (port, message.decode('utf-8')))
+        conn.commit()
     except Exception as e:
-        print(f"[!] Ошибка записи в лог: {e}")
+        print(f"[!] Ошибка записи в БД: {e}")
 
-def handle_client(client):
+def handle_client(client, conn, port):
     while True:
         try:
             message = client.recv(1024)
             if not message:
                 break
-
-            decoded = message.decode('utf-8').strip()
-
-            if decoded == "/history":
-                try:
-                    with open("chat.log", "r", encoding="utf-8") as log:
-                        history = log.read()
-                    client.send(f"[История чата]\n{history}".encode('utf-8'))
-                except:
-                    client.send("[!] История недоступна.".encode('utf-8'))
-                continue
-
-            broadcast(message)
+            broadcast(message, conn, port)
         except:
             break
     client.close()
     if client in clients:
         clients.remove(client)
 
-def start_server():
+def start_server(port):
+    # Подключение к базе
+    conn = sqlite3.connect("chat.db", check_same_thread=False)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            port INTEGER,
+            content TEXT
+        )
+    """)
+
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((HOST, PORT))
+    server.bind(('0.0.0.0', port))
     server.listen()
 
-    print(f"[+] Сервер запущен на {HOST}:{PORT}")
+    print(f"[+] Сервер запущен на порту {port}")
 
     while True:
         client, addr = server.accept()
         clients.append(client)
-        threading.Thread(target=handle_client, args=(client,), daemon=True).start()
+
+        # Отправка истории
+        rows = conn.execute("SELECT content FROM messages WHERE port = ?", (port,)).fetchall()
+        for row in rows:
+            client.send(row[0].encode('utf-8'))
+
+        threading.Thread(target=handle_client, args=(client, conn, port), daemon=True).start()
 
 if __name__ == "__main__":
-    start_server()
+    if len(sys.argv) != 2:
+        print("Использование: python3 server.py <порт>")
+        sys.exit(1)
+
+    port = int(sys.argv[1])
+    start_server(port)
