@@ -1,18 +1,36 @@
 import socket
 import threading
 import sys
+import re
 
 HOST = '84.46.247.15'
 PORT = 12345
+
+# ANSI цвета
+RED = '\033[91m'
+GREEN = '\033[92m'
+RESET = '\033[0m'
+
+def colorize(message):
+    # Ищем формат "Имя: сообщение"
+    match = re.match(r"^(.*?):\s(.*)", message)
+    if match:
+        name = match.group(1)
+        text = match.group(2)
+        return f"{RED}{name}{RESET}: {GREEN}{text}{RESET}"
+    return message  # если не совпадает, выводим как есть
 
 def receive_messages(sock):
     while True:
         try:
             message = sock.recv(1024).decode('utf-8')
             if message:
-                print(message)
+                sys.stdout.write('\r' + ' ' * 80 + '\r')  # очистить строку
+                print(colorize(message))
+                sys.stdout.write('> ')
+                sys.stdout.flush()
         except:
-            print("[!] Соединение потеряно.")
+            print("\n[!] Соединение потеряно.")
             sock.close()
             break
 
@@ -31,7 +49,7 @@ def start_client():
 
     try:
         while True:
-            msg = input()
+            msg = input('> ')
             if msg.lower() in ['exit', 'quit']:
                 break
             client.send(f"{name}: {msg}".encode('utf-8'))
