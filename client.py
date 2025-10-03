@@ -2,7 +2,7 @@ import socket
 import threading
 import sys
 
-HOST = '127.0.0.1'  # Заменить на IP сервера
+HOST = '84.46.247.15'
 PORT = 12345
 
 def receive_messages(sock):
