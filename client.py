@@ -2,9 +2,7 @@ import socket
 import threading
 import sys
 import re
-
-HOST = '84.46.247.15' 
-
+import os
 
 RED = '\033[91m'
 GREEN = '\033[92m'
@@ -37,11 +35,12 @@ def receive_messages(sock):
 
 def start_client():
     global buffer
-    port = int(input("Введите порт комнаты: ").strip())
+    host = '84.46.247.15'
+    port = int(os.environ.get('CHAT_PORT', input("Введите порт комнаты: ").strip()))
 
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        client.connect((HOST, port))
+        client.connect((host, port))
     except Exception as e:
         print(f"[!] Не удалось подключиться: {e}")
         return

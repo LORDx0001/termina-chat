@@ -12,7 +12,6 @@ def broadcast(message, conn, port):
         except:
             clients.remove(client)
 
-    # Сохраняем в базу
     try:
         conn.execute("INSERT INTO messages (port, content) VALUES (?, ?)", (port, message.decode('utf-8')))
         conn.commit()
@@ -33,7 +32,6 @@ def handle_client(client, conn, port):
         clients.remove(client)
 
 def start_server(port):
-    # Подключение к базе
     conn = sqlite3.connect("chat.db", check_same_thread=False)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS messages (
@@ -54,7 +52,6 @@ def start_server(port):
         client, addr = server.accept()
         clients.append(client)
 
-        # Отправка истории
         rows = conn.execute("SELECT content FROM messages WHERE port = ?", (port,)).fetchall()
         for row in rows:
             client.send(row[0].encode('utf-8'))
