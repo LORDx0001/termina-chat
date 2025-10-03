@@ -1,30 +1,21 @@
-name: Deploy Chat API
+name: Deploy to Server
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-
-    - name: Copy files to server
-      uses: appleboy/scp-action@master
+    - name: Deploy via SSH
+      uses: appleboy/ssh-action@v0.1.10
       with:
-        host: ${{ secrets.SERVER_HOST }}
+        host: ${{ secrets.SERVER_IP }}
         username: ${{ secrets.SERVER_USER }}
-        key: ${{ secrets.SERVER_KEY }}
-        source: "."
-        target: "/root/terminal-chat"
-
-    - name: Restart service
-      uses: appleboy/ssh-action@master
-      with:
-        host: ${{ secrets.SERVER_HOST }}
-        username: ${{ secrets.SERVER_USER }}
-        key: ${{ secrets.SERVER_KEY }}
+        key: ${{ secrets.SERVER_SSH_KEY }}
         script: |
-          sudo systemctl restart chat-api
+          cd terminal-chat
+          git pull origin main
+          sudo systemctl restart terminal-chat
