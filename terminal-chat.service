@@ -1,0 +1,41 @@
+[Unit]
+Description=Terminal Chat Server
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=chatuser
+Group=chatuser
+WorkingDirectory=/opt/terminal-chat
+ExecStart=/usr/bin/python3 /opt/terminal-chat/server.py
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Безопасность
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/terminal-chat
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Ресурсы
+LimitNOFILE=65536
+MemoryMax=512M
+CPUQuota=200%
+
+# Переменные окружения
+Environment=PYTHONUNBUFFERED=1
+Environment=CHAT_HOST=0.0.0.0
+Environment=CHAT_PORT=12345
+EnvironmentFile=-/opt/terminal-chat/.env
+
+[Install]
+WantedBy=multi-user.target

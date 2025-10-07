@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  terminal-chat-server:
+    build: .
+    container_name: terminal-chat-server
+    restart: unless-stopped
+    ports:
+      - "12345:12345"
+    volumes:
+      - chat_data:/app/data
+      - ./config.py:/app/config.py:ro
+    environment:
+      - CHAT_HOST=0.0.0.0
+      - CHAT_PORT=12345
+      - CHAT_DATA_FILE=/app/data/chat_data.json
+      - CHAT_LOG_FILE=/app/data/chat_server.log
+      - CHAT_LOG_LEVEL=INFO
+      - CHAT_MAX_CONNECTIONS=100
+    networks:
+      - chat_network
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 12345)); s.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Опциональный nginx для проксирования (если нужен веб-интерфейс в будущем)
+  nginx:
+    image: nginx:alpine
+    container_name: terminal-chat-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - terminal-chat-server
+    networks:
+      - chat_network
+    profiles:
+      - with-nginx
+
+volumes:
+  chat_data:
+    driver: local
+
+networks:
+  chat_network:
+    driver: bridge
