@@ -932,6 +932,13 @@ class ChatServer:
             if len(parts) < 2:
                 return "Использование: /create <название> [пароль]"
             
+            # Проверка: пользователь не должен быть в комнате
+            if username in self.user_rooms:
+                current_room_id = self.user_rooms[username]
+                if current_room_id in self.rooms:
+                    current_room_name = self.rooms[current_room_id].name
+                    return f"Вы уже находитесь в комнате '{current_room_name}'. Сначала покиньте её командой /leave"
+            
             room_name = parts[1]
             password = parts[2] if len(parts) > 2 else None
             room_id = self.create_room(room_name, username, password)
@@ -969,6 +976,121 @@ class ChatServer:
                 return f"Вы покинули комнату '{room.name}'"
             else:
                 return "Комната не найдена."
+        
+        elif cmd == '/users':
+            if username not in self.user_rooms:
+                return "Вы не находитесь ни в одной комнате."
+            
+            room_id = self.user_rooms[username]
+            if room_id not in self.rooms:
+                return "Комната не найдена."
+            
+            room = self.rooms[room_id]
+            if not room.users:
+                return "В комнате никого нет."
+            
+            result = f"\n=== ПОЛЬЗОВАТЕЛИ В КОМНАТЕ '{room.name}' ===\n"
+            for user_name in room.users:
+                if user_name == room.admin:
+                    result += f"👑 {user_name} (Администратор)\n"
+                else:
+                    result += f"👤 {user_name}\n"
+            
+            result += f"\nВсего пользователей: {len(room.users)}"
+            return result
+        
+        elif cmd == '/info':
+            if username not in self.user_rooms:
+                return "Вы не находитесь ни в одной комнате."
+            
+            room_id = self.user_rooms[username]
+            if room_id not in self.rooms:
+                return "Комната не найдена."
+            
+            room = self.rooms[room_id]
+            protected = "🔒 Защищена паролем" if room.password else "🔓 Открытая"
+            
+            result = f"""
+=== ИНФОРМАЦИЯ О КОМНАТЕ ===
+Название: {room.name}
+ID: {room.room_id}
+Администратор: {room.admin}
+Защита: {protected}
+Пользователей: {len(room.users)}
+Создана: {room.created_at}
+Последняя активность: {room.last_activity.strftime('%Y-%m-%d %H:%M:%S')}
+"""
+            return result
+        
+        elif cmd == '/password':
+            if len(parts) < 2:
+                return "Использование: /password <новый_пароль>"
+            
+            if username not in self.user_rooms:
+                return "Вы не находитесь ни в одной комнате."
+            
+            room_id = self.user_rooms[username]
+            if room_id not in self.rooms:
+                return "Комната не найдена."
+            
+            room = self.rooms[room_id]
+            
+            # Проверка прав администратора
+            if room.admin != username:
+                return "Только администратор комнаты может изменять пароль."
+            
+            new_password = parts[1]
+            old_protected = bool(room.password)
+            room.password = new_password
+            
+            if old_protected:
+                room.broadcast_message(f"Администратор {username} изменил пароль комнаты", "SYSTEM")
+                return f"Пароль комнаты изменён на: {new_password}"
+            else:
+                room.broadcast_message(f"Администратор {username} установил пароль для комнаты", "SYSTEM")
+                return f"Пароль комнаты установлен: {new_password}"
+        
+        elif cmd == '/kick':
+            if len(parts) < 2:
+                return "Использование: /kick <пользователь>"
+            
+            if username not in self.user_rooms:
+                return "Вы не находитесь ни в одной комнате."
+            
+            room_id = self.user_rooms[username]
+            if room_id not in self.rooms:
+                return "Комната не найдена."
+            
+            room = self.rooms[room_id]
+            
+            # Проверка прав администратора
+            if room.admin != username:
+                return "Только администратор комнаты может исключать пользователей."
+            
+            target_user = parts[1].lower()
+            
+            if target_user == username:
+                return "Вы не можете исключить самого себя."
+            
+            if target_user not in room.users:
+                return f"Пользователь {target_user} не найден в комнате."
+            
+            # Исключить пользователя
+            room.remove_user(target_user)
+            if target_user in self.user_rooms:
+                del self.user_rooms[target_user]
+            
+            # Уведомления
+            room.broadcast_message(f"Пользователь {target_user} был исключён администратором", "SYSTEM")
+            
+            # Отправить уведомление исключённому пользователю
+            if target_user in self.user_sockets:
+                try:
+                    self.user_sockets[target_user].send(f"Вы были исключены из комнаты '{room.name}' администратором {username}".encode('utf-8'))
+                except:
+                    pass
+            
+            return f"Пользователь {target_user} исключён из комнаты."
                 
         # ... остальные команды
         
