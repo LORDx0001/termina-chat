@@ -144,10 +144,29 @@ install_chat_server() {
         fi
     fi
     
-    # Установить Python зависимости
-    if [ -f requirements.txt ]; then
-        print_status "Установка Python зависимостей..."
-        pip3 install -r requirements.txt
+    # Проверить Python зависимости
+    print_status "Проверка Python зависимостей..."
+    
+    # Наш проект использует только стандартные библиотеки Python
+    # Проверяем их доступность
+    if python3 -c "import socket, threading, json, datetime, time, sys, os" >/dev/null 2>&1; then
+        print_status "Все необходимые Python модули доступны ✓"
+    else
+        print_error "Некоторые стандартные Python модули недоступны"
+        exit 1
+    fi
+    
+    # Если есть requirements.txt и он не пустой
+    if [ -f requirements.txt ] && [ -s requirements.txt ]; then
+        print_status "Обнаружен requirements.txt с дополнительными зависимостями"
+        
+        # Пытаемся установить с --user чтобы избежать системных конфликтов
+        if pip3 install -r requirements.txt --user >/dev/null 2>&1; then
+            print_status "Дополнительные зависимости установлены ✓"
+        else
+            print_warning "Не удалось установить дополнительные зависимости, но это не критично"
+            print_warning "Terminal-chat работает только со стандартными библиотеками Python"
+        fi
     fi
     
     # Создать конфигурационные файлы
