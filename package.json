@@ -1,0 +1,46 @@
+{
+  "name": "terminal-chat",
+  "version": "1.0.0",
+  "description": "Multi-room terminal chat server with CI/CD automation",
+  "author": "LORDx0001",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LORDx0001/terminal-chat.git"
+  },
+  "features": [
+    "Multi-room chat support",
+    "Admin controls and user management", 
+    "Password-protected rooms",
+    "Persistent message storage",
+    "SystemD service integration",
+    "Docker containerization",
+    "CI/CD automation with GitHub Actions",
+    "Zero-downtime deployments",
+    "Real-time monitoring and logging"
+  ],
+  "requirements": {
+    "python": ">=3.6",
+    "system": ["systemd", "ssh"],
+    "optional": ["docker", "docker-compose", "gh"]
+  },
+  "scripts": {
+    "check": "./system_check.sh",
+    "setup-cicd": "./setup_cicd.sh", 
+    "deploy": "./quick_deploy.sh",
+    "docker-build": "./docker_manager.sh build",
+    "docker-start": "./docker_manager.sh start",
+    "install": "./install.sh"
+  },
+  "ci_cd": {
+    "platform": "GitHub Actions",
+    "workflows": [".github/workflows/deploy.yml"],
+    "features": [
+      "Automated testing",
+      "Docker image building", 
+      "SSH deployment",
+      "Health checks",
+      "Telegram notifications"
+    ]
+  }
+}

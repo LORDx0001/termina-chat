@@ -1,21 +1,229 @@
-name: Deploy to Server
+name: CI/CD Terminal Chat
 
 on:
   push:
+    branches: [ main, develop ]
+  pull_request:
     branches: [ main ]
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
+env:
+  DEPLOY_PATH: /opt/terminal-chat
+  SERVICE_NAME: terminal-chat
 
+jobs:
+  test:
+    runs-on: ubuntu-latest
     steps:
-    - name: Deploy via SSH
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    
+    - name: Test server syntax
+      run: |
+        python -m py_compile server.py
+        python -m py_compile client.py
+        python -m py_compile server_production.py
+    
+    - name: Run tests
+      run: |
+        python test_chat.py
+
+  build-docker:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Login to Docker Hub
+      if: secrets.DOCKER_USERNAME != ''
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    
+    - name: Build and push Docker image
+      if: secrets.DOCKER_USERNAME != ''
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: |
+          ${{ secrets.DOCKER_USERNAME }}/terminal-chat:latest
+          ${{ secrets.DOCKER_USERNAME }}/terminal-chat:${{ github.sha }}
+
+  deploy-systemd:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && secrets.SERVER_IP != ''
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Deploy to Server (Systemd)
       uses: appleboy/ssh-action@v0.1.10
       with:
         host: ${{ secrets.SERVER_IP }}
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SERVER_SSH_KEY }}
+        port: ${{ secrets.SERVER_PORT || 22 }}
         script: |
-          cd terminal-chat
-          git pull origin main
-          sudo systemctl restart terminal-chat
+          set -e
+          
+          echo "🚀 Starting deployment..."
+          
+          # Создать резервную копию
+          if [ -d "${{ env.DEPLOY_PATH }}" ]; then
+            sudo cp -r ${{ env.DEPLOY_PATH }} ${{ env.DEPLOY_PATH }}.backup.$(date +%Y%m%d_%H%M%S)
+            echo "✅ Backup created"
+          fi
+          
+          # Создать директорию если не существует
+          sudo mkdir -p ${{ env.DEPLOY_PATH }}
+          
+          # Обновить код
+          if [ -d "${{ env.DEPLOY_PATH }}/.git" ]; then
+            cd ${{ env.DEPLOY_PATH }}
+            sudo git fetch origin
+            sudo git reset --hard origin/main
+          else
+            sudo git clone https://github.com/${{ github.repository }}.git ${{ env.DEPLOY_PATH }} || true
+            cd ${{ env.DEPLOY_PATH }}
+          fi
+          
+          echo "✅ Code updated"
+          
+          # Остановить сервис
+          sudo systemctl stop ${{ env.SERVICE_NAME }} || echo "Service not running"
+          
+          # Создать конфиг если не существует
+          if [ ! -f "${{ env.DEPLOY_PATH }}/config.py" ]; then
+            sudo cp config_example.py config.py
+            echo "✅ Config created from example"
+          fi
+          
+          if [ ! -f "${{ env.DEPLOY_PATH }}/.env" ]; then
+            sudo cp .env.example .env 2>/dev/null || true
+            echo "✅ Environment file created"
+          fi
+          
+          # Создать пользователя если не существует
+          if ! id chatuser >/dev/null 2>&1; then
+            sudo useradd --system --home-dir ${{ env.DEPLOY_PATH }} --shell /bin/false chatuser
+            echo "✅ User chatuser created"
+          fi
+          
+          # Установить права
+          sudo chown -R chatuser:chatuser ${{ env.DEPLOY_PATH }}
+          sudo chmod 755 ${{ env.DEPLOY_PATH }}
+          sudo chmod 644 ${{ env.DEPLOY_PATH }}/*.py
+          sudo chmod 600 ${{ env.DEPLOY_PATH }}/.env 2>/dev/null || true
+          
+          # Установить systemd сервис
+          sudo cp terminal-chat.service /etc/systemd/system/
+          sudo systemctl daemon-reload
+          sudo systemctl enable ${{ env.SERVICE_NAME }}
+          
+          # Запустить сервис
+          sudo systemctl start ${{ env.SERVICE_NAME }}
+          
+          echo "✅ Service started"
+          
+          # Проверить статус
+          sleep 3
+          if sudo systemctl is-active --quiet ${{ env.SERVICE_NAME }}; then
+            echo "✅ Service is running"
+            sudo systemctl status ${{ env.SERVICE_NAME }} --no-pager -l
+          else
+            echo "❌ Service failed to start"
+            sudo journalctl -u ${{ env.SERVICE_NAME }} --no-pager -n 20
+            exit 1
+          fi
+          
+          # Проверить порт
+          if sudo netstat -tulpn | grep -q :12345; then
+            echo "✅ Port 12345 is open"
+          else
+            echo "⚠️ Port 12345 not found"
+          fi
+          
+          echo "🎉 Deployment completed successfully!"
+
+  deploy-docker:
+    needs: [test, build-docker]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && secrets.DOCKER_DEPLOY == 'true'
+    
+    steps:
+    - name: Deploy with Docker
+      uses: appleboy/ssh-action@v0.1.10
+      with:
+        host: ${{ secrets.SERVER_IP }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SERVER_SSH_KEY }}
+        port: ${{ secrets.SERVER_PORT || 22 }}
+        script: |
+          set -e
+          
+          echo "🐳 Starting Docker deployment..."
+          
+          # Остановить текущий контейнер
+          docker stop terminal-chat-server 2>/dev/null || true
+          docker rm terminal-chat-server 2>/dev/null || true
+          
+          # Обновить образ
+          docker pull ${{ secrets.DOCKER_USERNAME }}/terminal-chat:latest
+          
+          # Запустить новый контейнер
+          docker run -d \
+            --name terminal-chat-server \
+            --restart unless-stopped \
+            -p 12345:12345 \
+            -v chat_data:/app/data \
+            ${{ secrets.DOCKER_USERNAME }}/terminal-chat:latest
+          
+          # Проверить статус
+          sleep 3
+          if docker ps | grep -q terminal-chat-server; then
+            echo "✅ Docker container is running"
+            docker ps | grep terminal-chat-server
+          else
+            echo "❌ Docker container failed to start"
+            docker logs terminal-chat-server
+            exit 1
+          fi
+          
+          echo "🎉 Docker deployment completed!"
+
+  notify:
+    needs: [deploy-systemd, deploy-docker]
+    runs-on: ubuntu-latest
+    if: always() && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Notify Success
+      if: needs.deploy-systemd.result == 'success' || needs.deploy-docker.result == 'success'
+      run: |
+        echo "🎉 Deployment successful!"
+        echo "Repository: ${{ github.repository }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Server: ${{ secrets.SERVER_IP }}"
+    
+    - name: Notify Failure
+      if: needs.deploy-systemd.result == 'failure' || needs.deploy-docker.result == 'failure'
+      run: |
+        echo "❌ Deployment failed!"
+        echo "Check the logs above for details"

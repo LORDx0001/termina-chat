@@ -117,25 +117,29 @@ create_user() {
 install_chat_server() {
     print_status "Установка сервера чата..."
     
+    # Получить абсолютный путь к директории скрипта
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    
     # Создать директорию установки
     mkdir -p "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
     
     # Если это Git репозиторий, клонируем его
     if [ -n "$REPO_URL" ]; then
         print_status "Клонирование из репозитория: $REPO_URL"
+        cd "$INSTALL_DIR"
         git clone "$REPO_URL" .
     else
         # Иначе копируем локальные файлы
-        if [ -f "$(dirname $0)/server.py" ]; then
-            print_status "Копирование локальных файлов..."
-            cp "$(dirname $0)"/*.py "$INSTALL_DIR/"
-            cp "$(dirname $0)"/requirements.txt "$INSTALL_DIR/" 2>/dev/null || true
-            cp "$(dirname $0)"/config_example.py "$INSTALL_DIR/config.py" 2>/dev/null || true
-            cp "$(dirname $0)"/.env.example "$INSTALL_DIR/.env" 2>/dev/null || true
+        if [ -f "$SCRIPT_DIR/server.py" ]; then
+            print_status "Копирование локальных файлов из $SCRIPT_DIR..."
+            cp "$SCRIPT_DIR"/*.py "$INSTALL_DIR/"
+            cp "$SCRIPT_DIR"/requirements.txt "$INSTALL_DIR/" 2>/dev/null || true
+            cp "$SCRIPT_DIR"/config_example.py "$INSTALL_DIR/config.py" 2>/dev/null || true
+            cp "$SCRIPT_DIR"/.env.example "$INSTALL_DIR/.env" 2>/dev/null || true
         else
-            print_error "Файлы сервера не найдены"
-            print_status "Укажите URL репозитория: REPO_URL=https://github.com/user/repo $0"
+            print_error "Файлы сервера не найдены в $SCRIPT_DIR"
+            print_status "Проверьте что файлы server.py, client.py находятся в той же директории что и install.sh"
+            print_status "Или укажите URL репозитория: REPO_URL=https://github.com/user/repo $0"
             exit 1
         fi
     fi
@@ -251,8 +255,9 @@ create_management_script() {
     print_status "Создание скрипта управления..."
     
     # Копируем скрипт управления если он есть
-    if [ -f "$(dirname $0)/manage_service.sh" ]; then
-        cp "$(dirname $0)/manage_service.sh" "/usr/local/bin/terminal-chat"
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    if [ -f "$SCRIPT_DIR/manage_service.sh" ]; then
+        cp "$SCRIPT_DIR/manage_service.sh" "/usr/local/bin/terminal-chat"
         chmod +x "/usr/local/bin/terminal-chat"
         print_status "Скрипт управления установлен: /usr/local/bin/terminal-chat"
     fi
