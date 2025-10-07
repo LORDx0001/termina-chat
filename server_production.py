@@ -28,8 +28,8 @@ except ImportError:
     PORT = 12345
     MAX_CONNECTIONS = 100
     MAX_MESSAGE_LENGTH = 1024
-    DATA_FILE = "chat_data.json"
-    LOG_FILE = "chat_server.log"
+    DATA_FILE = "/opt/terminal-chat/data/chat_data.json"
+    LOG_FILE = "/opt/terminal-chat/logs/chat_server.log"
     LOG_LEVEL = "INFO"
     AUTO_SAVE_INTERVAL = 60
 
