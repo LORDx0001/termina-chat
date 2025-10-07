@@ -6,6 +6,7 @@ import threading
 import sys
 import re
 import os
+import getpass
 
 HOST = '84.46.247.15'  # Для локального тестирования
 PORT = 12345
@@ -121,6 +122,11 @@ class ChatClient:
   /users         - пользователи в комнате
   /info          - информация о комнате
   
+{CYAN}Персональные команды:{RESET}
+  /profile       - ваш профиль
+  /myrooms       - ваши комнаты
+  /history       - история сообщений
+  
 {CYAN}Админские команды:{RESET}
   /kick <user>   - выгнать пользователя
   /password <new> - изменить пароль комнаты
@@ -159,7 +165,7 @@ class ChatClient:
         return True
         
     def start_client(self):
-        """Запустить клиент"""
+        """Запустить клиент с аутентификацией"""
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
         try:
@@ -171,26 +177,13 @@ class ChatClient:
             print(f"{RED}[!] Не удалось подключиться: {e}{RESET}")
             return
         
-        # Получить имя пользователя
-        while True:
-            self.username = input(f"{BOLD}Введите ваше имя: {RESET}").strip()
-            if self.username and len(self.username) >= 2:
-                break
-            print(f"{RED}Имя должно содержать минимум 2 символа{RESET}")
-        
-        # Отправить приветствие
-        welcome_msg = f"{self.username} присоединился к чату."
-        if not self.send_message(welcome_msg):
+        # Аутентификация
+        if not self.authenticate():
             return
         
         # Запустить поток для получения сообщений
         receive_thread = threading.Thread(target=self.receive_messages, daemon=True)
         receive_thread.start()
-        
-        # Показать справку
-        print(f"\n{BOLD}=== ДОБРО ПОЖАЛОВАТЬ В МНОГОПОЛЬЗОВАТЕЛЬСКИЙ ЧАТ ==={RESET}")
-        print(f"Используйте {CYAN}/help{RESET} для команд сервера или {CYAN}!help{RESET} для локальных команд")
-        print(f"Начните с {CYAN}/list{RESET} чтобы увидеть комнаты или {CYAN}/create <название>{RESET} чтобы создать новую\n")
         
         # Основной цикл ввода
         try:
@@ -229,6 +222,104 @@ class ChatClient:
             print(f"\n{YELLOW}[!] Выход по Ctrl+C{RESET}")
         finally:
             self.disconnect()
+    
+    def authenticate(self):
+        """Процесс аутентификации"""
+        try:
+            # Ждем запрос аутентификации
+            auth_prompt = self.socket.recv(1024).decode('utf-8')
+            if auth_prompt != "AUTH_REQUIRED":
+                print(f"{RED}Неожиданный ответ сервера: {auth_prompt}{RESET}")
+                return False
+            
+            print(f"\n{BOLD}=== АУТЕНТИФИКАЦИЯ ==={RESET}")
+            
+            # Получить имя пользователя
+            while True:
+                username = input(f"{BOLD}Введите имя пользователя: {RESET}").strip()
+                if username and len(username) >= 3 and len(username) <= 20:
+                    # Проверить допустимые символы
+                    allowed_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-')
+                    if all(c in allowed_chars for c in username):
+                        break
+                    else:
+                        print(f"{RED}Имя может содержать только буквы, цифры, '_' и '-'{RESET}")
+                else:
+                    print(f"{RED}Имя должно содержать от 3 до 20 символов{RESET}")
+            
+            self.username = username.lower()
+            
+            # Отправить логин
+            login_msg = f"LOGIN:{self.username}"
+            self.socket.send(login_msg.encode('utf-8'))
+            
+            # Получить ответ сервера
+            response = self.socket.recv(1024).decode('utf-8')
+            
+            if response.startswith("NEW_USER:"):
+                # Новый пользователь
+                message = response[9:]
+                print(f"{YELLOW}{message}{RESET}")
+                
+                confirm = input(f"{BOLD}Создать новый аккаунт? (y/n): {RESET}").strip().lower()
+                self.socket.send(confirm.encode('utf-8'))
+                
+                if confirm in ['y', 'yes']:
+                    # Ждем запрос пароля
+                    pwd_prompt = self.socket.recv(1024).decode('utf-8')
+                    if pwd_prompt.startswith("PASSWORD_NEW:"):
+                        message = pwd_prompt[13:]
+                        print(f"{CYAN}{message}{RESET}")
+                        
+                        import getpass
+                        password = getpass.getpass(f"{BOLD}Пароль: {RESET}")
+                        
+                        if len(password) < 6:
+                            print(f"{RED}Пароль должен быть не менее 6 символов{RESET}")
+                            return False
+                        
+                        self.socket.send(password.encode('utf-8'))
+                        
+                        # Получить результат
+                        result = self.socket.recv(1024).decode('utf-8')
+                        if result.startswith("SUCCESS:"):
+                            print(f"{GREEN}{result[8:]}{RESET}")
+                            return True
+                        else:
+                            print(f"{RED}{result[6:] if result.startswith('ERROR:') else result}{RESET}")
+                            return False
+                else:
+                    return False
+                    
+            elif response.startswith("PASSWORD:"):
+                # Существующий пользователь
+                message = response[9:]
+                print(f"{CYAN}{message}{RESET}")
+                
+                import getpass
+                password = getpass.getpass(f"{BOLD}Пароль: {RESET}")
+                
+                self.socket.send(password.encode('utf-8'))
+                
+                # Получить результат
+                result = self.socket.recv(1024).decode('utf-8')
+                if result.startswith("SUCCESS:"):
+                    print(f"{GREEN}{result[8:]}{RESET}")
+                    return True
+                else:
+                    print(f"{RED}{result[6:] if result.startswith('ERROR:') else result}{RESET}")
+                    return False
+                    
+            elif response.startswith("ERROR:"):
+                print(f"{RED}{response[6:]}{RESET}")
+                return False
+            else:
+                print(f"{RED}Неожиданный ответ сервера: {response}{RESET}")
+                return False
+                
+        except Exception as e:
+            print(f"{RED}Ошибка аутентификации: {e}{RESET}")
+            return False
             
     def disconnect(self):
         """Отключиться от сервера"""

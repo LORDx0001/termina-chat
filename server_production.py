@@ -16,6 +16,7 @@ import signal
 import sys
 import time
 import traceback
+import hashlib
 from typing import Dict, List, Optional
 from pathlib import Path
 
@@ -32,6 +33,83 @@ except ImportError:
     LOG_FILE = "/opt/terminal-chat/logs/chat_server.log"
     LOG_LEVEL = "INFO"
     AUTO_SAVE_INTERVAL = 60
+    USERS_FILE = "/opt/terminal-chat/data/users.json"
+
+class User:
+    """Класс для представления пользователя с аутентификацией"""
+    def __init__(self, username: str, password_hash: str, created_at: str = None, 
+                 last_login: str = None, message_history: List = None, 
+                 room_history: List = None, settings: Dict = None):
+        self.username = username
+        self.password_hash = password_hash
+        self.created_at = created_at or datetime.datetime.now().isoformat()
+        self.last_login = last_login
+        self.message_history = message_history or []
+        self.room_history = room_history or []
+        self.settings = settings or {}
+        self.is_online = False
+        self.current_room = None
+        
+    def check_password(self, password: str) -> bool:
+        """Проверить пароль пользователя"""
+        return self.password_hash == self.hash_password(password)
+    
+    @staticmethod
+    def hash_password(password: str) -> str:
+        """Хеширование пароля"""
+        return hashlib.sha256(password.encode('utf-8')).hexdigest()
+    
+    def add_message_to_history(self, room_id: str, message: str, timestamp: str = None):
+        """Добавить сообщение в историю пользователя"""
+        if timestamp is None:
+            timestamp = datetime.datetime.now().isoformat()
+        
+        self.message_history.append({
+            'room_id': room_id,
+            'message': message,
+            'timestamp': timestamp
+        })
+        
+        # Ограничить историю последними 1000 сообщениями
+        if len(self.message_history) > 1000:
+            self.message_history = self.message_history[-1000:]
+    
+    def add_room_to_history(self, room_id: str, room_name: str):
+        """Добавить комнату в историю посещений"""
+        room_entry = {'room_id': room_id, 'room_name': room_name, 'last_visit': datetime.datetime.now().isoformat()}
+        
+        # Удалить если уже есть и добавить в начало
+        self.room_history = [r for r in self.room_history if r['room_id'] != room_id]
+        self.room_history.insert(0, room_entry)
+        
+        # Ограничить историю последними 50 комнатами
+        if len(self.room_history) > 50:
+            self.room_history = self.room_history[:50]
+    
+    def to_dict(self) -> Dict:
+        """Преобразовать в словарь для сохранения"""
+        return {
+            'username': self.username,
+            'password_hash': self.password_hash,
+            'created_at': self.created_at,
+            'last_login': self.last_login,
+            'message_history': self.message_history,
+            'room_history': self.room_history,
+            'settings': self.settings
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'User':
+        """Создать объект из словаря"""
+        return cls(
+            username=data['username'],
+            password_hash=data['password_hash'],
+            created_at=data.get('created_at'),
+            last_login=data.get('last_login'),
+            message_history=data.get('message_history', []),
+            room_history=data.get('room_history', []),
+            settings=data.get('settings', {})
+        )
 
 class ChatRoom:
     def __init__(self, room_id: str, name: str, admin: str, password: str = None):
@@ -109,6 +187,9 @@ class ChatServer:
         self.user_sockets: Dict[str, socket.socket] = {}
         self.socket_users: Dict[socket.socket, str] = {}
         self.data_file = DATA_FILE
+        self.users_file = USERS_FILE
+        self.users: Dict[str, User] = {}  # Словарь всех зарегистрированных пользователей
+        self.online_users: Dict[str, User] = {}  # Словарь онлайн пользователей
         self.running = False
         self.server_socket = None
         self.stats = {
@@ -116,12 +197,14 @@ class ChatServer:
             'total_connections': 0,
             'active_connections': 0,
             'messages_sent': 0,
-            'rooms_created': 0
+            'rooms_created': 0,
+            'registered_users': 0
         }
         
         self.setup_logging()
         self.setup_signal_handlers()
         self.load_data()
+        self.load_users()
         
         # Запустить фоновые задачи
         self.start_background_tasks()
@@ -251,6 +334,16 @@ class ChatServer:
     def cleanup_user(self, username: str):
         """Очистить все ссылки на пользователя"""
         try:
+            # Сохранить данные пользователя перед отключением
+            if username in self.users:
+                user = self.users[username]
+                user.is_online = False
+                self.save_users()
+            
+            # Удалить из онлайн пользователей
+            if username in self.online_users:
+                del self.online_users[username]
+            
             # Удалить из комнаты
             if username in self.user_rooms:
                 room_id = self.user_rooms[username]
@@ -347,6 +440,120 @@ class ChatServer:
             # Удалить временный файл в случае ошибки
             if os.path.exists(f"{self.data_file}.tmp"):
                 os.unlink(f"{self.data_file}.tmp")
+    
+    def load_users(self):
+        """Загрузить пользователей из файла"""
+        try:
+            if os.path.exists(self.users_file):
+                with open(self.users_file, 'r', encoding='utf-8') as f:
+                    users_data = json.load(f)
+                
+                for username, user_data in users_data.get('users', {}).items():
+                    self.users[username] = User.from_dict(user_data)
+                
+                self.stats['registered_users'] = len(self.users)
+                self.logger.info(f"Загружено пользователей: {len(self.users)}")
+            else:
+                self.logger.info("Файл пользователей не найден, создаем новый")
+                self.save_users()
+                
+        except Exception as e:
+            self.logger.error(f"Ошибка загрузки пользователей: {e}")
+            self.users = {}
+    
+    def save_users(self):
+        """Сохранить пользователей в файл"""
+        try:
+            # Создать временный файл для атомарной записи
+            temp_file = f"{self.users_file}.tmp"
+            
+            data = {
+                'users': {username: user.to_dict() for username, user in self.users.items()},
+                'last_updated': datetime.datetime.now().isoformat(),
+                'total_users': len(self.users)
+            }
+            
+            # Убедиться что директория существует
+            os.makedirs(os.path.dirname(self.users_file), exist_ok=True)
+            
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                
+            # Атомарно заменить основной файл
+            os.replace(temp_file, self.users_file)
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка сохранения пользователей: {e}")
+            # Удалить временный файл в случае ошибки
+            if os.path.exists(f"{self.users_file}.tmp"):
+                os.unlink(f"{self.users_file}.tmp")
+    
+    def register_user(self, username: str, password: str) -> bool:
+        """Зарегистрировать нового пользователя"""
+        username = username.strip().lower()
+        
+        # Проверка валидности имени пользователя
+        if not username or len(username) < 3 or len(username) > 20:
+            return False
+        
+        # Проверка на недопустимые символы
+        allowed_chars = set('abcdefghijklmnopqrstuvwxyz0123456789_-')
+        if not all(c in allowed_chars for c in username):
+            return False
+        
+        # Проверка что пользователь не существует
+        if username in self.users:
+            return False
+        
+        # Создать нового пользователя
+        password_hash = User.hash_password(password)
+        user = User(username, password_hash)
+        self.users[username] = user
+        
+        self.save_users()
+        self.stats['registered_users'] = len(self.users)
+        
+        self.action_logger.info(f"REGISTER: Новый пользователь зарегистрирован: {username}")
+        return True
+    
+    def authenticate_user(self, username: str, password: str) -> bool:
+        """Аутентификация пользователя"""
+        username = username.strip().lower()
+        
+        if username not in self.users:
+            return False
+        
+        user = self.users[username]
+        if user.check_password(password):
+            user.last_login = datetime.datetime.now().isoformat()
+            self.save_users()
+            return True
+        
+        return False
+    
+    def login_user(self, username: str, user_socket: socket.socket) -> User:
+        """Войти в систему (пользователь уже аутентифицирован)"""
+        username = username.strip().lower()
+        user = self.users[username]
+        
+        # Если пользователь уже онлайн, отключить предыдущее подключение
+        if username in self.online_users:
+            old_socket = self.user_sockets.get(username)
+            if old_socket:
+                try:
+                    old_socket.send("Ваш аккаунт был авторизован с другого устройства".encode('utf-8'))
+                    old_socket.close()
+                except:
+                    pass
+        
+        # Установить онлайн статус
+        user.is_online = True
+        self.online_users[username] = user
+        self.user_sockets[username] = user_socket
+        self.socket_users[user_socket] = username
+        
+        self.action_logger.info(f"LOGIN: Пользователь {username} вошел в систему")
+        return user
                 
     def create_room(self, room_name: str, admin: str, password: str = None) -> str:
         """Создать новую комнату"""
@@ -386,6 +593,12 @@ class ChatServer:
         room.add_user(username, user_socket, address)
         self.user_rooms[username] = room_id
         
+        # Добавить комнату в историю пользователя
+        if username in self.users:
+            user = self.users[username]
+            user.add_room_to_history(room_id, room.name)
+            user.current_room = room_id
+        
         # Отправить приветствие и историю
         try:
             user_socket.send(f"\n=== Добро пожаловать в комнату '{room.name}' (ID: {room_id}) ===".encode('utf-8'))
@@ -414,82 +627,85 @@ class ChatServer:
         return True
         
     def handle_client(self, client_socket, address):
-        """Обработать подключение клиента"""
+        """Обработать подключение клиента с аутентификацией"""
         username = None
         try:
-            client_socket.settimeout(30)  # Таймаут для начального подключения
+            client_socket.settimeout(60)  # Таймаут для аутентификации
             
-            # Получить приветствие
-            welcome_msg = client_socket.recv(1024).decode('utf-8')
-            if "присоединился к чату" in welcome_msg:
-                username = welcome_msg.split(" присоединился к чату")[0]
-                
-                # Проверить уникальность имени
-                if username in self.user_sockets:
-                    error_msg = "Пользователь с таким именем уже подключен"
-                    client_socket.send(error_msg.encode('utf-8'))
-                    self.action_logger.warning(f"DUPLICATE_NAME: попытка подключения {username} с {address}")
-                    return
-                
-                self.user_sockets[username] = client_socket
-                self.socket_users[client_socket] = username
-                client_socket.address = address
-                
-                self.stats['total_connections'] += 1
-                self.stats['active_connections'] += 1
-                
-                self.action_logger.info(f"CONNECT: {username} подключился с {address}")
-                self.logger.info(f"Пользователь {username} подключился с {address}")
-                
-                # Отправить приветствие
-                welcome_messages = [
-                    "=== ДОБРО ПОЖАЛОВАТЬ В МНОГОПОЛЬЗОВАТЕЛЬСКИЙ ЧАТ ===",
-                    "Используйте /help для получения списка команд",
-                    "Используйте /list для просмотра доступных комнат",
-                    "Используйте /create <название> [пароль] для создания новой комнаты",
-                    "Используйте /join <ID> [пароль] для входа в существующую комнату"
-                ]
-                
-                for msg in welcome_messages:
-                    client_socket.send(msg.encode('utf-8'))
-                
-                client_socket.settimeout(None)  # Убрать таймаут для обычной работы
-                
-                # Основной цикл обработки сообщений
-                while self.running:
-                    try:
-                        message = client_socket.recv(MAX_MESSAGE_LENGTH).decode('utf-8')
-                        if not message:
-                            break
-                            
-                        if message.startswith('/'):
-                            response = self.handle_command(username, message)
-                            if response:
-                                client_socket.send(response.encode('utf-8'))
-                        else:
-                            # Обычное сообщение
-                            if username in self.user_rooms:
-                                room_id = self.user_rooms[username]
-                                if room_id in self.rooms:
-                                    room = self.rooms[room_id]
-                                    if ": " in message:
-                                        sender, text = message.split(": ", 1)
-                                        room.broadcast_message(f"{sender}: {text}", sender)
-                                        self.stats['messages_sent'] += 1
-                                    else:
-                                        room.broadcast_message(message, username)
-                                        self.stats['messages_sent'] += 1
-                            else:
-                                client_socket.send("Вы не находитесь ни в одной комнате. Используйте /join <ID> или /create <название>".encode('utf-8'))
-                                
-                    except socket.timeout:
-                        continue
-                    except ConnectionResetError:
-                        break
-                    except Exception as e:
-                        self.logger.error(f"Ошибка обработки сообщения от {username}: {e}")
+            # Аутентификация пользователя
+            username = self.authenticate_client(client_socket, address)
+            if not username:
+                return
+            
+            # Пользователь аутентифицирован, входим в систему
+            user = self.login_user(username, client_socket)
+            
+            self.stats['total_connections'] += 1
+            self.stats['active_connections'] += 1
+            
+            self.action_logger.info(f"CONNECT: {username} подключился с {address}")
+            self.logger.info(f"Пользователь {username} подключился с {address}")
+            
+            # Отправить персонализированное приветствие
+            welcome_messages = [
+                f"=== ДОБРО ПОЖАЛОВАТЬ ОБРАТНО, {username.upper()}! ===",
+                f"Последний вход: {user.last_login or 'Первый раз'}",
+                f"Ваших сообщений: {len(user.message_history)}",
+                f"Посещенных комнат: {len(user.room_history)}",
+                "",
+                "=== КОМАНДЫ ЧАТА ===",
+                "Используйте /help для получения списка команд",
+                "Используйте /list для просмотра доступных комнат",
+                "Используйте /create <название> [пароль] для создания новой комнаты",
+                "Используйте /join <ID> [пароль] для входа в существующую комнату",
+                "Используйте /myrooms для просмотра ваших комнат",
+                "Используйте /history для просмотра истории сообщений"
+            ]
+            
+            for msg in welcome_messages:
+                client_socket.send(msg.encode('utf-8'))
+            
+            client_socket.settimeout(None)  # Убрать таймаут для обычной работы
+            
+            # Основной цикл обработки сообщений
+            while self.running:
+                try:
+                    message = client_socket.recv(MAX_MESSAGE_LENGTH).decode('utf-8')
+                    if not message:
                         break
                         
+                    if message.startswith('/'):
+                        response = self.handle_command(username, message)
+                        if response:
+                            client_socket.send(response.encode('utf-8'))
+                    else:
+                        # Обычное сообщение
+                        if username in self.user_rooms:
+                            room_id = self.user_rooms[username]
+                            if room_id in self.rooms:
+                                room = self.rooms[room_id]
+                                if ": " in message:
+                                    sender, text = message.split(": ", 1)
+                                    room.broadcast_message(f"{sender}: {text}", sender)
+                                    # Добавить в историю пользователя
+                                    user.add_message_to_history(room_id, text)
+                                    self.stats['messages_sent'] += 1
+                                else:
+                                    room.broadcast_message(message, username)
+                                    # Добавить в историю пользователя
+                                    user.add_message_to_history(room_id, message)
+                                    self.stats['messages_sent'] += 1
+                        else:
+                            client_socket.send("Вы не находитесь ни в одной комнате. Используйте /join <ID> или /create <название>".encode('utf-8'))
+                            
+                except socket.timeout:
+                    continue
+                except ConnectionResetError:
+                    break
+                except Exception as e:
+                    self.logger.error(f"Ошибка обработки сообщения от {username}: {e}")
+                    break
+                    
         except Exception as e:
             self.logger.error(f"Ошибка обработки клиента {address}: {e}")
             self.logger.debug(f"Traceback: {traceback.format_exc()}")
@@ -503,6 +719,68 @@ class ChatServer:
                 client_socket.close()
             except:
                 pass
+    
+    def authenticate_client(self, client_socket, address) -> Optional[str]:
+        """Аутентификация клиента"""
+        try:
+            # Отправить запрос на аутентификацию
+            auth_prompt = "AUTH_REQUIRED"
+            client_socket.send(auth_prompt.encode('utf-8'))
+            
+            # Получить логин
+            login_data = client_socket.recv(1024).decode('utf-8')
+            if not login_data.startswith("LOGIN:"):
+                client_socket.send("ERROR:Неверный формат логина".encode('utf-8'))
+                return None
+            
+            username = login_data[6:].strip().lower()
+            
+            # Проверить валидность имени пользователя
+            if not username or len(username) < 3 or len(username) > 20:
+                client_socket.send("ERROR:Имя пользователя должно быть от 3 до 20 символов".encode('utf-8'))
+                return None
+            
+            # Проверить что пользователь существует
+            if username not in self.users:
+                # Новый пользователь - предложить регистрацию
+                client_socket.send("NEW_USER:Пользователь не найден. Создать новый аккаунт? (y/n)".encode('utf-8'))
+                
+                response = client_socket.recv(1024).decode('utf-8').strip().lower()
+                if response != 'y' and response != 'yes':
+                    client_socket.send("ERROR:Регистрация отменена".encode('utf-8'))
+                    return None
+                
+                # Запросить пароль для нового аккаунта
+                client_socket.send("PASSWORD_NEW:Введите пароль для нового аккаунта:".encode('utf-8'))
+                password = client_socket.recv(1024).decode('utf-8').strip()
+                
+                if len(password) < 6:
+                    client_socket.send("ERROR:Пароль должен быть не менее 6 символов".encode('utf-8'))
+                    return None
+                
+                # Зарегистрировать пользователя
+                if self.register_user(username, password):
+                    client_socket.send("SUCCESS:Аккаунт создан! Добро пожаловать!".encode('utf-8'))
+                    return username
+                else:
+                    client_socket.send("ERROR:Не удалось создать аккаунт".encode('utf-8'))
+                    return None
+            else:
+                # Существующий пользователь - запросить пароль
+                client_socket.send("PASSWORD:Введите пароль:".encode('utf-8'))
+                password = client_socket.recv(1024).decode('utf-8').strip()
+                
+                if self.authenticate_user(username, password):
+                    client_socket.send("SUCCESS:Авторизация успешна!".encode('utf-8'))
+                    return username
+                else:
+                    client_socket.send("ERROR:Неверный пароль".encode('utf-8'))
+                    self.action_logger.warning(f"AUTH_FAILED: {username} с {address}")
+                    return None
+                    
+        except Exception as e:
+            self.logger.error(f"Ошибка аутентификации клиента {address}: {e}")
+            return None
                 
     def handle_command(self, username: str, command: str) -> str:
         """Обработать команду (с тем же функционалом что и раньше)"""
@@ -527,7 +805,12 @@ class ChatServer:
 /leave - покинуть текущую комнату
 /info - информация о текущей комнате
 
-👨‍💼 Админские команды (только для создателя комнаты):
+� Персональные команды:
+/profile - ваш профиль
+/myrooms - ваши комнаты
+/history - история сообщений
+
+�👨‍💼 Админские команды (только для создателя комнаты):
 /kick <пользователь> - исключить пользователя
 /password <новый_пароль> - установить/изменить пароль комнаты
 
@@ -550,6 +833,58 @@ class ChatServer:
 Сообщений отправлено: {self.stats['messages_sent']}
 Комнат создано: {self.stats['rooms_created']}
 Активных комнат: {len(self.rooms)}
+Зарегистрированных пользователей: {self.stats['registered_users']}
+"""
+        
+        elif cmd == '/myrooms':
+            user = self.users.get(username)
+            if not user or not user.room_history:
+                return "У вас нет истории посещений комнат."
+            
+            result = "\n=== ВАШИ КОМНАТЫ ===\n"
+            for room_entry in user.room_history[:10]:  # Показать последние 10
+                room_id = room_entry['room_id']
+                room_name = room_entry['room_name']
+                last_visit = room_entry['last_visit']
+                status = "🟢 Активна" if room_id in self.rooms else "🔴 Закрыта"
+                result += f"{room_id}: {room_name} - {status}\n"
+                result += f"   Последний визит: {last_visit[:19]}\n\n"
+            return result
+            
+        elif cmd == '/history':
+            user = self.users.get(username)
+            if not user or not user.message_history:
+                return "У вас нет истории сообщений."
+            
+            result = "\n=== ВАША ИСТОРИЯ СООБЩЕНИЙ ===\n"
+            recent_messages = user.message_history[-20:]  # Последние 20 сообщений
+            
+            for msg_entry in recent_messages:
+                room_id = msg_entry['room_id']
+                message = msg_entry['message']
+                timestamp = msg_entry['timestamp'][:19]  # Убрать миллисекунды
+                
+                room_name = "Неизвестная комната"
+                if room_id in self.rooms:
+                    room_name = self.rooms[room_id].name
+                
+                result += f"[{timestamp}] {room_name}: {message}\n"
+            
+            return result
+            
+        elif cmd == '/profile':
+            user = self.users.get(username)
+            if not user:
+                return "Профиль не найден."
+            
+            return f"""
+=== ВАШ ПРОФИЛЬ ===
+Имя пользователя: {user.username}
+Дата регистрации: {user.created_at[:19]}
+Последний вход: {user.last_login[:19] if user.last_login else 'Первый раз'}
+Сообщений отправлено: {len(user.message_history)}
+Комнат посещено: {len(user.room_history)}
+Статус: 🟢 Онлайн
 """
         
         # Остальные команды остаются теми же...
