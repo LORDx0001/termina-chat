@@ -59,7 +59,8 @@ class ChatClient:
         
     def clear_input_line(self):
         """Очистить текущую строку ввода"""
-        sys.stdout.write('\r' + ' ' * 100 + '\r')
+        # Сохранить позицию курсора, очистить строку, вернуть курсор
+        sys.stdout.write('\r\033[K')  # Очистить строку от курсора до конца
         sys.stdout.flush()
         
     def print_prompt(self):
@@ -77,6 +78,7 @@ class ChatClient:
             try:
                 message = self.socket.recv(4096).decode('utf-8')
                 if message:
+                    # Очистить текущую строку ввода
                     self.clear_input_line()
                     
                     # Обработать специальные сообщения
@@ -88,7 +90,10 @@ class ChatClient:
                     elif "Вы покинули комнату" in message:
                         self.current_room = None
                     
+                    # Показать сообщение
                     print(self.colorize_message(message))
+                    
+                    # Восстановить приглашение для ввода
                     self.print_prompt()
                 else:
                     break

@@ -806,9 +806,10 @@ class ChatServer:
 /info - информация о текущей комнате
 
 � Персональные команды:
-/profile - ваш профиль
+/profile, /myprofile - ваш профиль
 /myrooms - ваши комнаты
-/history - история сообщений
+/history - ваша история сообщений
+/chathistory - история текущей комнаты
 
 �👨‍💼 Админские команды (только для создателя комнаты):
 /kick <пользователь> - исключить пользователя
@@ -872,7 +873,34 @@ class ChatServer:
             
             return result
             
-        elif cmd == '/profile':
+        elif cmd == '/chathistory':
+            if username not in self.user_rooms:
+                return "Вы не находитесь в комнате."
+            
+            room_id = self.user_rooms[username]
+            if room_id not in self.rooms:
+                return "Комната не найдена."
+            
+            room = self.rooms[room_id]
+            if not room.messages:
+                return "История сообщений пуста."
+            
+            result = f"\n=== ИСТОРИЯ КОМНАТЫ '{room.name}' ===\n"
+            recent_messages = room.messages[-30:]  # Последние 30 сообщений
+            
+            for msg in recent_messages:
+                timestamp = msg.get('timestamp', '')[:19]
+                sender = msg.get('sender', 'Система')
+                message = msg.get('message', '')
+                
+                if sender == 'SYSTEM':
+                    result += f"[{timestamp}] 🔔 {message}\n"
+                else:
+                    result += f"[{timestamp}] {sender}: {message}\n"
+            
+            return result
+            
+        elif cmd == '/profile' or cmd == '/myprofile':
             user = self.users.get(username)
             if not user:
                 return "Профиль не найден."
@@ -922,6 +950,25 @@ class ChatServer:
                 return f"Вы присоединились к комнате {room_id}"
             else:
                 return "Не удалось присоединиться к комнате. Проверьте ID и пароль."
+        
+        elif cmd == '/leave':
+            if username not in self.user_rooms:
+                return "Вы не находитесь ни в одной комнате."
+            
+            room_id = self.user_rooms[username]
+            if room_id in self.rooms:
+                room = self.rooms[room_id]
+                room.remove_user(username)
+                room.broadcast_message(f"{username} покинул комнату", "SYSTEM")
+                
+                # Обновить пользователя
+                if username in self.users:
+                    self.users[username].current_room = None
+                
+                del self.user_rooms[username]
+                return f"Вы покинули комнату '{room.name}'"
+            else:
+                return "Комната не найдена."
                 
         # ... остальные команды
         
