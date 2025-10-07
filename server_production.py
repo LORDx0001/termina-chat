@@ -187,7 +187,7 @@ class ChatServer:
         self.user_sockets: Dict[str, socket.socket] = {}
         self.socket_users: Dict[socket.socket, str] = {}
         self.data_file = DATA_FILE
-        self.users_file = USERS_FILE
+        self.users_file = "/opt/terminal-chat/data/users.json"  # Прямое определение для совместимости
         self.users: Dict[str, User] = {}  # Словарь всех зарегистрированных пользователей
         self.online_users: Dict[str, User] = {}  # Словарь онлайн пользователей
         self.running = False
